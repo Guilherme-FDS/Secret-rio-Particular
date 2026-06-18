@@ -1,0 +1,111 @@
+{
+  "name": "04 - Secretário - Documentação Fim do Dia",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 21 * * *" }]
+        }
+      },
+      "id": "cron-doc-prompt",
+      "name": "Cron 21h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 200]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "30 22 * * *" }]
+        }
+      },
+      "id": "cron-lembrete",
+      "name": "Cron 22h30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/secretario",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.MEU_NUMERO, text: '📝 O que você resolveu hoje?\\n\\nMe manda em áudio ou texto — vou documentar no Drive.' }) }}"
+      },
+      "id": "enviar-prompt-doc",
+      "name": "Enviar Prompt Documentação",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [420, 200]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "=documentado:{{ new Date().toISOString().split('T')[0] }}"
+      },
+      "id": "redis-check-doc",
+      "name": "Checar Documentou Hoje",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [420, 400],
+      "credentials": { "redis": { "id": "redis-cred", "name": "Redis Secretário" } }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "doc-check",
+              "leftValue": "={{ $json.value }}",
+              "rightValue": "sim",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-nao-documentou",
+      "name": "Não Documentou?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/secretario",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.MEU_NUMERO, text: '⚠️ Você não documentou o dia ainda.\\n\\nMe manda um áudio rápido do que fez — pode ser curto.' }) }}"
+      },
+      "id": "enviar-lembrete",
+      "name": "Enviar Lembrete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [860, 400]
+    }
+  ],
+  "connections": {
+    "Cron 21h":          { "main": [[{ "node": "Enviar Prompt Documentação", "type": "main", "index": 0 }]] },
+    "Cron 22h30":        { "main": [[{ "node": "Checar Documentou Hoje", "type": "main", "index": 0 }]] },
+    "Checar Documentou Hoje": { "main": [[{ "node": "Não Documentou?", "type": "main", "index": 0 }]] },
+    "Não Documentou?":   { "main": [[{ "node": "Enviar Lembrete", "type": "main", "index": 0 }], []] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

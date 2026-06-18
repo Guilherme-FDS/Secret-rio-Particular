@@ -1,0 +1,6 @@
+.env
+n8n/data/
+*.key
+*.pem
+__pycache__/
+*.pyc

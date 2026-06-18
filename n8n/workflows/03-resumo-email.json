@@ -1,0 +1,88 @@
+{
+  "name": "03 - Secretário - Resumo Email 8h (dias úteis)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 8 * * 1-5" }]
+        }
+      },
+      "id": "cron-email",
+      "name": "Cron 8h Dias Úteis",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Busca emails não lidos das últimas 24h e classifica com Claude\nconst tokenResp = await fetch('https://oauth2.googleapis.com/token', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({\n    client_id: $env.GOOGLE_CLIENT_ID,\n    client_secret: $env.GOOGLE_CLIENT_SECRET,\n    refresh_token: $env.GOOGLE_REFRESH_TOKEN,\n    grant_type: 'refresh_token'\n  })\n});\nconst { access_token } = await tokenResp.json();\n\n// Busca emails não lidos (últimas 24h)\nconst r = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=20&q=is:unread newer_than:1d', {\n  headers: { 'Authorization': `Bearer ${access_token}` }\n});\nconst data = await r.json();\nconst mensagens = data.messages || [];\n\nif (mensagens.length === 0) {\n  return [{ json: { resumo: '📧 Sem emails não lidos nas últimas 24h.' } }];\n}\n\n// Busca detalhes de até 10 emails\nconst detalhes = await Promise.all(mensagens.slice(0, 10).map(async m => {\n  const r2 = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, {\n    headers: { 'Authorization': `Bearer ${access_token}` }\n  });\n  const msg = await r2.json();\n  const h = msg.payload?.headers || [];\n  return {\n    id: m.id,\n    from: h.find(x => x.name === 'From')?.value || '?',\n    subject: h.find(x => x.name === 'Subject')?.value || '?',\n    snippet: msg.snippet || ''\n  };\n}));\n\nreturn [{ json: { emails: detalhes, total: mensagens.length, access_token } }];"
+      },
+      "id": "buscar-emails",
+      "name": "Buscar Emails",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role: 'user', content: 'Classifique estes emails em urgente / importante / pode ignorar / spam. Responda em português, formato WhatsApp curto (máx 15 linhas). Emails: ' + JSON.stringify($json.emails) }] }) }}"
+      },
+      "id": "classificar-claude",
+      "name": "Classificar com Claude",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const classificacao = $input.first().json.content?.[0]?.text || '';\nconst total = $('Buscar Emails').first().json.total;\nreturn [{ json: { resumo: `📧 ${total} email(s) não lido(s):\\n\\n${classificacao}` } }];"
+      },
+      "id": "montar-resumo",
+      "name": "Montar Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/secretario",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.MEU_NUMERO, text: $json.resumo }) }}"
+      },
+      "id": "enviar-resumo",
+      "name": "Enviar Resumo WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1080, 300]
+    }
+  ],
+  "connections": {
+    "Cron 8h Dias Úteis":   { "main": [[{ "node": "Buscar Emails", "type": "main", "index": 0 }]] },
+    "Buscar Emails":         { "main": [[{ "node": "Classificar com Claude", "type": "main", "index": 0 }]] },
+    "Classificar com Claude":{ "main": [[{ "node": "Montar Resumo", "type": "main", "index": 0 }]] },
+    "Montar Resumo":         { "main": [[{ "node": "Enviar Resumo WhatsApp", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

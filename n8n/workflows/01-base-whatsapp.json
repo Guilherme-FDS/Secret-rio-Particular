@@ -1,0 +1,463 @@
+{
+  "name": "01 - Secretário - Mensagens WhatsApp",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "whatsapp",
+        "responseMode": "onReceived",
+        "responseData": "noData"
+      },
+      "id": "wh-main",
+      "name": "Webhook Evolution",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300],
+      "webhookId": "secretario-whatsapp"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extrai e valida mensagem recebida da Evolution API\nconst body = $input.first().json;\n\nif (body.event !== 'messages.upsert') return [];\nconst data = body.data;\nif (data?.key?.fromMe) return [];\nif (data?.key?.remoteJid?.includes('@g.us')) return [];\n\nconst phone = data.key.remoteJid.replace('@s.whatsapp.net', '');\nconst messageType = data.messageType;\nconst instanceName = body.instance;\n\nlet rawText = '';\nlet isAudio = false;\n\nif (messageType === 'conversation') {\n  rawText = data.message?.conversation || '';\n} else if (messageType === 'extendedTextMessage') {\n  rawText = data.message?.extendedTextMessage?.text || '';\n} else if (['audioMessage', 'pttMessage'].includes(messageType)) {\n  isAudio = true;\n} else {\n  return [];\n}\n\nif (!rawText && !isAudio) return [];\n\nreturn [{ json: { phone, messageType, rawText, isAudio, instanceName, messageData: data } }];"
+      },
+      "id": "extract-msg",
+      "name": "Extrair Mensagem",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [
+            {
+              "id": "audio-check",
+              "leftValue": "={{ $json.isAudio }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if-audio",
+      "name": "É Áudio?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/getBase64FromMediaMessage/{{ $('Extrair Mensagem').first().json.instanceName }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Extrair Mensagem').first().json.messageData.message) }}"
+      },
+      "id": "download-audio",
+      "name": "Download Áudio Base64",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [860, 160]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Converte base64 da Evolution API para item binário para enviar ao Groq\nconst audioData = $input.first().json;\nconst base64 = audioData.base64;\nconst mimetype = (audioData.mimetype || 'audio/ogg').split(';')[0];\n\nreturn [{\n  json: {\n    phone: $('Extrair Mensagem').first().json.phone,\n    instanceName: $('Extrair Mensagem').first().json.instanceName\n  },\n  binary: {\n    audioFile: {\n      data: base64,\n      mimeType: mimetype,\n      fileName: 'audio.ogg'\n    }\n  }\n}];"
+      },
+      "id": "b64-to-bin",
+      "name": "Converter para Binário",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.GROQ_API_KEY }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "model", "value": "whisper-large-v3" },
+            { "name": "language", "value": "pt" },
+            { "name": "response_format", "value": "text" },
+            {
+              "name": "file",
+              "value": "",
+              "parameterType": "formBinaryData",
+              "inputDataFieldName": "audioFile"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "groq-transcribe",
+      "name": "Transcrever Groq",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1300, 160]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "name": "phone", "value": "={{ $('Extrair Mensagem').first().json.phone }}", "type": "string" },
+            { "name": "instanceName", "value": "={{ $('Extrair Mensagem').first().json.instanceName }}", "type": "string" },
+            { "name": "texto", "value": "={{ $json.body || $json }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-texto-audio",
+      "name": "Set Texto Áudio",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [1520, 160]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            { "name": "phone", "value": "={{ $json.phone }}", "type": "string" },
+            { "name": "instanceName", "value": "={{ $json.instanceName }}", "type": "string" },
+            { "name": "texto", "value": "={{ $json.rawText }}", "type": "string" }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-texto-direto",
+      "name": "Set Texto Direto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.3,
+      "position": [860, 440]
+    },
+    {
+      "parameters": {
+        "mode": "passThrough",
+        "output": "first"
+      },
+      "id": "merge-texto",
+      "name": "Merge Texto",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1740, 300]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "=history:{{ $json.phone }}"
+      },
+      "id": "redis-get",
+      "name": "Ler Histórico Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1960, 300],
+      "credentials": { "redis": { "id": "redis-cred", "name": "Redis Secretário" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "const phone = $('Merge Texto').first().json.phone;\nconst instanceName = $('Merge Texto').first().json.instanceName;\nconst texto = $('Merge Texto').first().json.texto;\n\nlet historico = [];\ntry {\n  const val = $('Ler Histórico Redis').first().json.value;\n  if (val) historico = JSON.parse(val);\n} catch(e) { historico = []; }\n\nconst systemPrompt = `Você é o secretário pessoal do Guilherme Faustino da Silva.\n\nPERFIL:\n- Maringá/PR\n- Frentes ativas: Clube do Gole (validação Sebrae/Impulso Maringá), Secretario (app Node/React/PostgreSQL/Docker), curso ADS no CEEP, trabalho corporativo (gestão financeira/contratos)\n- Dispositivos: iPhone 14, PC desktop (Windows), notebook\n\nCOMPORTAMENTO:\n- Respostas curtas no WhatsApp — máximo 3 linhas salvo pedido explícito\n- Confirme SEMPRE antes de executar ações irreversíveis (delete, envio de email, deploy)\n- Português brasileiro, tom direto\n- Mantenha contexto das últimas 20 mensagens\n\nDocumentos mapeados no Drive:\n{\n  \"tracker\": \"ID_TRACKER\",\n  \"cronograma\": \"ID_CRONOGRAMA\",\n  \"participacao\": \"ID_IMPULSO_MARINGA\"\n}\n\nProjetos SSH:\n{\n  \"secretario\": { \"path\": \"/path/to/secretario\", \"portas\": [3000, 5173, 8080, 5432] },\n  \"clube-do-gole\": { \"path\": \"/path/to/clube-do-gole\" }\n}\n\nResponda SEMPRE em JSON válido:\n{\n  \"intencao\": \"chat|tarefa|agenda|drive|email|codigo|deploy|doc\",\n  \"resposta\": \"texto para o usuário (máx 3 linhas)\",\n  \"acao\": {\n    \"tipo\": \"nenhuma|criar_evento|ler_doc|escrever_doc|ler_email|arquivar_email|enviar_email|executar_ssh|deploy\",\n    \"params\": {}\n  },\n  \"confirmacao_necessaria\": false\n}`;\n\nconst mensagens = [...historico, { role: 'user', content: texto }].slice(-40);\n\nreturn [{\n  json: {\n    phone, instanceName, texto,\n    payload: {\n      model: 'claude-sonnet-4-6',\n      max_tokens: 1024,\n      system: systemPrompt,\n      messages: mensagens\n    },\n    historico: mensagens\n  }\n}];"
+      },
+      "id": "build-payload",
+      "name": "Montar Payload Claude",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2180, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}"
+      },
+      "id": "claude-api",
+      "name": "Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [2400, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const phone = $('Montar Payload Claude').first().json.phone;\nconst instanceName = $('Montar Payload Claude').first().json.instanceName;\nconst historico = $('Montar Payload Claude').first().json.historico;\n\nconst content = $input.first().json.content?.[0]?.text || '';\n\nlet parsed;\ntry {\n  // Remove possível markdown em volta do JSON\n  const clean = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(clean);\n} catch(e) {\n  parsed = { intencao: 'chat', resposta: content, acao: { tipo: 'nenhuma', params: {} }, confirmacao_necessaria: false };\n}\n\nconst historicoAtualizado = [...historico, { role: 'assistant', content }].slice(-40);\n\nreturn [{\n  json: {\n    phone, instanceName,\n    intencao: parsed.intencao || 'chat',\n    resposta: parsed.resposta || content,\n    acao: parsed.acao || { tipo: 'nenhuma', params: {} },\n    confirmacao_necessaria: parsed.confirmacao_necessaria || false,\n    historicoAtualizado: JSON.stringify(historicoAtualizado)\n  }\n}];"
+      },
+      "id": "parse-response",
+      "name": "Parsear Resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2620, 300]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=history:{{ $json.phone }}",
+        "value": "={{ $json.historicoAtualizado }}",
+        "keyType": "automatic",
+        "expire": true,
+        "ttl": 604800
+      },
+      "id": "redis-set",
+      "name": "Salvar Histórico Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [2840, 300],
+      "credentials": { "redis": { "id": "redis-cred", "name": "Redis Secretário" } }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.intencao }}", "rightValue": "agenda", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "agenda"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.intencao }}", "rightValue": "drive", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "drive"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.intencao }}", "rightValue": "email", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.intencao }}", "rightValue": "deploy", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "deploy"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.intencao }}", "rightValue": "codigo", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "codigo"
+            },
+            {
+              "conditions": {
+                "conditions": [{ "leftValue": "={{ $json.intencao }}", "rightValue": "doc", "operator": { "type": "string", "operation": "equals" } }],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "doc"
+            }
+          ]
+        },
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "router-intent",
+      "name": "Router Intenção",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [3060, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Renovar token Google antes de chamar APIs\nconst resp = await fetch('https://oauth2.googleapis.com/token', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({\n    client_id: $env.GOOGLE_CLIENT_ID,\n    client_secret: $env.GOOGLE_CLIENT_SECRET,\n    refresh_token: $env.GOOGLE_REFRESH_TOKEN,\n    grant_type: 'refresh_token'\n  })\n});\nconst token = await resp.json();\n\nconst params = $json.acao?.params || {};\nconst tipo = $json.acao?.tipo || 'criar_evento';\n\nlet respostaExtra = '';\n\nif (tipo === 'criar_evento') {\n  const inicio = new Date(`${params.data}T${params.hora || '09:00'}:00-03:00`);\n  const fim = new Date(inicio.getTime() + (params.duracao || 60) * 60000);\n  const evento = {\n    summary: params.titulo || 'Evento',\n    description: params.descricao || '',\n    start: { dateTime: inicio.toISOString(), timeZone: 'America/Sao_Paulo' },\n    end: { dateTime: fim.toISOString(), timeZone: 'America/Sao_Paulo' }\n  };\n  const r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {\n    method: 'POST',\n    headers: { 'Authorization': `Bearer ${token.access_token}`, 'Content-Type': 'application/json' },\n    body: JSON.stringify(evento)\n  });\n  const ev = await r.json();\n  respostaExtra = ev.id ? `✅ Evento criado: ${ev.summary} — ${params.data} às ${params.hora}` : `❌ Erro ao criar evento`;\n} else if (tipo === 'consultar_agenda') {\n  const hoje = new Date();\n  const amanha = new Date(hoje);\n  amanha.setDate(amanha.getDate() + 1);\n  const r = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${hoje.toISOString()}&timeMax=${amanha.toISOString()}&singleEvents=true&orderBy=startTime`, {\n    headers: { 'Authorization': `Bearer ${token.access_token}` }\n  });\n  const data = await r.json();\n  const eventos = data.items || [];\n  respostaExtra = eventos.length === 0 ? 'Sem eventos hoje.' : eventos.map(e => `• ${e.summary} — ${new Date(e.start.dateTime || e.start.date).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'})}`).join('\\n');\n}\n\nreturn [{ json: { ...$json, respostaFinal: respostaExtra || $json.resposta } }];"
+      },
+      "id": "handler-agenda",
+      "name": "Handler Agenda",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handler Google Drive — lê ou escreve documentos\nconst tokenResp = await fetch('https://oauth2.googleapis.com/token', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({\n    client_id: $env.GOOGLE_CLIENT_ID,\n    client_secret: $env.GOOGLE_CLIENT_SECRET,\n    refresh_token: $env.GOOGLE_REFRESH_TOKEN,\n    grant_type: 'refresh_token'\n  })\n});\nconst { access_token } = await tokenResp.json();\n\nconst DOCS = {\n  tracker: 'ID_TRACKER',\n  cronograma: 'ID_CRONOGRAMA',\n  participacao: 'ID_IMPULSO_MARINGA'\n};\n\nconst params = $json.acao?.params || {};\nconst tipo = $json.acao?.tipo || 'ler_doc';\nconst docKey = params.doc || 'tracker';\nconst docId = DOCS[docKey] || params.doc_id;\n\nlet respostaFinal = '';\n\nif (tipo === 'ler_doc' && docId) {\n  const r = await fetch(`https://docs.googleapis.com/v1/documents/${docId}`, {\n    headers: { 'Authorization': `Bearer ${access_token}` }\n  });\n  const doc = await r.json();\n  const texto = doc.body?.content?.map(b => b.paragraph?.elements?.map(e => e.textRun?.content || '').join('')).join('') || '';\n  respostaFinal = texto.substring(0, 500) + (texto.length > 500 ? '...' : '');\n} else if (tipo === 'escrever_doc' && docId) {\n  // Append texto ao documento\n  const conteudo = params.conteudo || '';\n  const r = await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {\n    method: 'POST',\n    headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },\n    body: JSON.stringify({\n      requests: [{ insertText: { location: { index: 1 }, text: `\\n${conteudo}\\n` } }]\n    })\n  });\n  const ok = r.ok;\n  respostaFinal = ok ? `✅ Doc atualizado: ${docKey}` : '❌ Erro ao atualizar doc';\n  if (ok) {\n    // Marca documentação do dia como feita\n    // (Redis — salvo no próximo node se necessário)\n  }\n}\n\nreturn [{ json: { ...$json, respostaFinal: respostaFinal || $json.resposta } }];"
+      },
+      "id": "handler-drive",
+      "name": "Handler Drive",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handler Gmail\nconst tokenResp = await fetch('https://oauth2.googleapis.com/token', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({\n    client_id: $env.GOOGLE_CLIENT_ID,\n    client_secret: $env.GOOGLE_CLIENT_SECRET,\n    refresh_token: $env.GOOGLE_REFRESH_TOKEN,\n    grant_type: 'refresh_token'\n  })\n});\nconst { access_token } = await tokenResp.json();\n\nconst params = $json.acao?.params || {};\nconst tipo = $json.acao?.tipo || 'ler_email';\nlet respostaFinal = '';\n\nif (tipo === 'ler_email') {\n  const limite = params.limite || 5;\n  const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limite}&q=is:unread`, {\n    headers: { 'Authorization': `Bearer ${access_token}` }\n  });\n  const data = await r.json();\n  const msgs = data.messages || [];\n  if (msgs.length === 0) { respostaFinal = 'Nenhum email não lido.'; }\n  else {\n    const detalhes = await Promise.all(msgs.slice(0, 5).map(async m => {\n      const r2 = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject`, {\n        headers: { 'Authorization': `Bearer ${access_token}` }\n      });\n      const msg = await r2.json();\n      const headers = msg.payload?.headers || [];\n      const from = headers.find(h => h.name === 'From')?.value || '?';\n      const subject = headers.find(h => h.name === 'Subject')?.value || '?';\n      return `• ${from.split('<')[0].trim()} — ${subject}`;\n    }));\n    respostaFinal = `📧 ${msgs.length} não lido(s):\\n${detalhes.join('\\n')}`;\n  }\n} else if (tipo === 'arquivar_email') {\n  const remetente = params.remetente || '';\n  const r = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=from:${encodeURIComponent(remetente)}`, {\n    headers: { 'Authorization': `Bearer ${access_token}` }\n  });\n  const data = await r.json();\n  const ids = (data.messages || []).map(m => m.id);\n  if (ids.length > 0) {\n    await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify', {\n      method: 'POST',\n      headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },\n      body: JSON.stringify({ ids, removeLabelIds: ['INBOX'] })\n    });\n    respostaFinal = `✅ ${ids.length} email(s) de \"${remetente}\" arquivado(s).`;\n  } else {\n    respostaFinal = `Nenhum email encontrado de \"${remetente}\".`;\n  }\n}\n\nreturn [{ json: { ...$json, respostaFinal: respostaFinal || $json.resposta } }];"
+      },
+      "id": "handler-email",
+      "name": "Handler Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handler Deploy via SSH (Tailscale)\nconst params = $json.acao?.params || {};\nconst projeto = params.projeto || 'secretario';\n\nconst PROJETOS = {\n  'secretario': { path: '/path/to/secretario', portas: [3000, 5173, 8080] },\n  'clube-do-gole': { path: '/path/to/clube-do-gole', portas: [3000] }\n};\n\nconst proj = PROJETOS[projeto];\nif (!proj) return [{ json: { ...$json, respostaFinal: `❌ Projeto \"${projeto}\" não mapeado.` } }];\n\nconst cmd = `cd ${proj.path} && git pull && docker compose up -d --build 2>&1 | tail -20`;\n\n// Executa via ssh_exec.py (montado em /home/node/scripts)\nconst { exec } = require('child_process');\nconst { promisify } = require('util');\nconst execAsync = promisify(exec);\n\nconst sshPayload = JSON.stringify({\n  host: $env.SSH_HOST,\n  user: $env.SSH_USER,\n  cmd: cmd\n});\n\nlet respostaFinal;\ntry {\n  const { stdout } = await execAsync(`python3 /home/node/scripts/ssh_exec.py '${sshPayload}'`);\n  const result = JSON.parse(stdout);\n  if (result.ok) {\n    respostaFinal = `✅ Deploy ${projeto} concluído.\\n${result.saida.slice(-200)}`;\n  } else {\n    respostaFinal = `❌ Erro no deploy ${projeto}:\\n${result.erro.slice(0, 200)}`;\n  }\n} catch(e) {\n  respostaFinal = `❌ Falha SSH: ${e.message}`;\n}\n\nreturn [{ json: { ...$json, respostaFinal } }];"
+      },
+      "id": "handler-deploy",
+      "name": "Handler Deploy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 580]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handler Código — altera arquivo via SSH\nconst params = $json.acao?.params || {};\nconst cmd = params.comando || 'echo \"nenhum comando\"';\n\nconst { exec } = require('child_process');\nconst { promisify } = require('util');\nconst execAsync = promisify(exec);\n\nconst sshPayload = JSON.stringify({ host: $env.SSH_HOST, user: $env.SSH_USER, cmd });\n\nlet respostaFinal;\ntry {\n  const { stdout } = await execAsync(`python3 /home/node/scripts/ssh_exec.py '${sshPayload}'`);\n  const result = JSON.parse(stdout);\n  respostaFinal = result.ok ? `✅ Executado:\\n${result.saida.slice(0, 300)}` : `❌ Erro:\\n${result.erro.slice(0, 300)}`;\n} catch(e) {\n  respostaFinal = `❌ Falha SSH: ${e.message}`;\n}\n\nreturn [{ json: { ...$json, respostaFinal } }];"
+      },
+      "id": "handler-codigo",
+      "name": "Handler Código SSH",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 740]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Handler Documentação — salva registro do dia no Drive\nconst tokenResp = await fetch('https://oauth2.googleapis.com/token', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({\n    client_id: $env.GOOGLE_CLIENT_ID,\n    client_secret: $env.GOOGLE_CLIENT_SECRET,\n    refresh_token: $env.GOOGLE_REFRESH_TOKEN,\n    grant_type: 'refresh_token'\n  })\n});\nconst { access_token } = await tokenResp.json();\n\nconst hoje = new Date().toLocaleDateString('pt-BR');\nconst params = $json.acao?.params || {};\nconst frente = params.frente || 'Geral';\nconst conteudo = params.conteudo || $('Merge Texto').first().json.texto;\n\nconst DOCS = { tracker: 'ID_TRACKER', cronograma: 'ID_CRONOGRAMA' };\nconst docId = DOCS[params.doc] || DOCS.tracker;\n\nconst registro = `\\n## ${hoje}\\n**Frente:** ${frente}\\n**O que foi feito:** ${conteudo}\\n**Próximos passos:** ${params.proximos || '—'}\\n`;\n\nconst r = await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {\n  method: 'POST',\n  headers: { 'Authorization': `Bearer ${access_token}`, 'Content-Type': 'application/json' },\n  body: JSON.stringify({\n    requests: [{ insertText: { location: { index: 1 }, text: registro } }]\n  })\n});\n\nconst ok = r.ok;\n\n// Marca documentação do dia no Redis\nif (ok) {\n  // Set via HTTP ao Redis não é direto — usa próximo node Redis\n}\n\nreturn [{ json: { ...$json, respostaFinal: ok ? `✅ Documentado em ${frente} — ${hoje}` : '❌ Erro ao salvar no Drive', docSalvo: ok } }];"
+      },
+      "id": "handler-doc",
+      "name": "Handler Doc",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 900]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normaliza a resposta final para envio no WhatsApp\nconst texto = $json.respostaFinal || $json.resposta || 'Entendido.';\nreturn [{ json: { ...$json, respostaFinal: texto } }];"
+      },
+      "id": "resposta-default",
+      "name": "Resposta Direta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3280, 300]
+    },
+    {
+      "parameters": {
+        "mode": "passThrough",
+        "output": "first"
+      },
+      "id": "merge-final",
+      "name": "Merge Resposta Final",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [3520, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/{{ $json.instanceName }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $json.phone, text: $json.respostaFinal }) }}"
+      },
+      "id": "send-whatsapp",
+      "name": "Enviar WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [3740, 500]
+    }
+  ],
+  "connections": {
+    "Webhook Evolution": {
+      "main": [[{ "node": "Extrair Mensagem", "type": "main", "index": 0 }]]
+    },
+    "Extrair Mensagem": {
+      "main": [[{ "node": "É Áudio?", "type": "main", "index": 0 }]]
+    },
+    "É Áudio?": {
+      "main": [
+        [{ "node": "Download Áudio Base64", "type": "main", "index": 0 }],
+        [{ "node": "Set Texto Direto", "type": "main", "index": 0 }]
+      ]
+    },
+    "Download Áudio Base64": {
+      "main": [[{ "node": "Converter para Binário", "type": "main", "index": 0 }]]
+    },
+    "Converter para Binário": {
+      "main": [[{ "node": "Transcrever Groq", "type": "main", "index": 0 }]]
+    },
+    "Transcrever Groq": {
+      "main": [[{ "node": "Set Texto Áudio", "type": "main", "index": 0 }]]
+    },
+    "Set Texto Áudio": {
+      "main": [[{ "node": "Merge Texto", "type": "main", "index": 0 }]]
+    },
+    "Set Texto Direto": {
+      "main": [[{ "node": "Merge Texto", "type": "main", "index": 1 }]]
+    },
+    "Merge Texto": {
+      "main": [[{ "node": "Ler Histórico Redis", "type": "main", "index": 0 }]]
+    },
+    "Ler Histórico Redis": {
+      "main": [[{ "node": "Montar Payload Claude", "type": "main", "index": 0 }]]
+    },
+    "Montar Payload Claude": {
+      "main": [[{ "node": "Claude API", "type": "main", "index": 0 }]]
+    },
+    "Claude API": {
+      "main": [[{ "node": "Parsear Resposta", "type": "main", "index": 0 }]]
+    },
+    "Parsear Resposta": {
+      "main": [[{ "node": "Salvar Histórico Redis", "type": "main", "index": 0 }]]
+    },
+    "Salvar Histórico Redis": {
+      "main": [[{ "node": "Router Intenção", "type": "main", "index": 0 }]]
+    },
+    "Router Intenção": {
+      "main": [
+        [{ "node": "Handler Agenda", "type": "main", "index": 0 }],
+        [{ "node": "Handler Drive", "type": "main", "index": 0 }],
+        [{ "node": "Handler Email", "type": "main", "index": 0 }],
+        [{ "node": "Handler Deploy", "type": "main", "index": 0 }],
+        [{ "node": "Handler Código SSH", "type": "main", "index": 0 }],
+        [{ "node": "Handler Doc", "type": "main", "index": 0 }],
+        [{ "node": "Resposta Direta", "type": "main", "index": 0 }]
+      ]
+    },
+    "Handler Agenda":     { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 0 }]] },
+    "Handler Drive":      { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 1 }]] },
+    "Handler Email":      { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 2 }]] },
+    "Handler Deploy":     { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 3 }]] },
+    "Handler Código SSH": { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 4 }]] },
+    "Handler Doc":        { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 5 }]] },
+    "Resposta Direta":    { "main": [[{ "node": "Merge Resposta Final", "type": "main", "index": 6 }]] },
+    "Merge Resposta Final": {
+      "main": [[{ "node": "Enviar WhatsApp", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}

@@ -1,0 +1,58 @@
+{
+  "name": "02 - Secretário - Briefing Diário 7h",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 7 * * *" }]
+        }
+      },
+      "id": "cron-briefing",
+      "name": "Cron 7h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Obtém token Google e busca eventos do dia no Calendar\nconst tokenResp = await fetch('https://oauth2.googleapis.com/token', {\n  method: 'POST',\n  headers: { 'Content-Type': 'application/x-www-form-urlencoded' },\n  body: new URLSearchParams({\n    client_id: $env.GOOGLE_CLIENT_ID,\n    client_secret: $env.GOOGLE_CLIENT_SECRET,\n    refresh_token: $env.GOOGLE_REFRESH_TOKEN,\n    grant_type: 'refresh_token'\n  })\n});\nconst { access_token } = await tokenResp.json();\n\nconst agora = new Date();\nconst fimDia = new Date(agora);\nfimDia.setHours(23, 59, 59, 999);\n\nconst url = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${agora.toISOString()}&timeMax=${fimDia.toISOString()}&singleEvents=true&orderBy=startTime`;\nconst r = await fetch(url, { headers: { 'Authorization': `Bearer ${access_token}` } });\nconst data = await r.json();\n\nconst eventos = (data.items || []).map(e => {\n  const inicio = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : 'dia todo';\n  return `• ${inicio} — ${e.summary}`;\n});\n\nconst hoje = agora.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' });\n\nconst mensagem = eventos.length === 0\n  ? `Bom dia. ${hoje.charAt(0).toUpperCase() + hoje.slice(1)} — nenhum evento agendado.`\n  : `Bom dia. ${hoje.charAt(0).toUpperCase() + hoje.slice(1)}:\\n${eventos.join('\\n')}`;\n\nreturn [{ json: { mensagem } }];"
+      },
+      "id": "buscar-eventos",
+      "name": "Buscar Eventos do Dia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.EVOLUTION_API_URL }}/message/sendText/secretario",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "apikey", "value": "={{ $env.EVOLUTION_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $env.MEU_NUMERO, text: $json.mensagem }) }}"
+      },
+      "id": "enviar-briefing",
+      "name": "Enviar Briefing WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "Cron 7h": {
+      "main": [[{ "node": "Buscar Eventos do Dia", "type": "main", "index": 0 }]]
+    },
+    "Buscar Eventos do Dia": {
+      "main": [[{ "node": "Enviar Briefing WhatsApp", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" }
+}
