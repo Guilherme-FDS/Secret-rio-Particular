@@ -41,7 +41,6 @@ services:
       N8N_BASIC_AUTH_USER: ${N8N_USER}
       N8N_BASIC_AUTH_PASSWORD: ${N8N_PASSWORD}
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      # Credenciais externas disponíveis via env no n8n
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       GROQ_API_KEY: ${GROQ_API_KEY}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
@@ -51,17 +50,43 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
       GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN}
       GMAIL_ADDRESS: ${GMAIL_ADDRESS}
-      SSH_HOST: ${SSH_HOST}
+      MEU_NUMERO: ${MEU_NUMERO}
+      # SSH: usa host.docker.internal para acesso ao PC local
+      # ou IP Tailscale para acesso remoto
+      SSH_HOST: ${SSH_HOST:-host-gateway}
       SSH_USER: ${SSH_USER}
+    extra_hosts:
+      - "host-gateway:host-gateway"  # resolve host.docker.internal no Linux
     volumes:
       - ./n8n/data:/home/node/.n8n
       - ./n8n/workflows:/home/node/workflows
       - ./scripts:/home/node/scripts
-      - ${SSH_KEY_PATH}:/home/node/.ssh/id_rsa:ro
+      - ./n8n/ssh:/home/node/.ssh:ro
     depends_on:
       - redis
     networks:
       - secretario-net
+
+  # ── Acesso Tailscale (n8n → rede Tailscale) ───────────────────────────
+  # Permite ao n8n alcançar máquinas remotas via Tailscale (modo userspace)
+  # Só ativo se TAILSCALE_AUTHKEY estiver preenchido no .env
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: secretario-tailscale
+    hostname: secretario-agent
+    restart: unless-stopped
+    environment:
+      TS_AUTHKEY: ${TAILSCALE_AUTHKEY:-}
+      TS_USERSPACE: "true"
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_HOSTNAME: secretario-n8n
+      TS_EXTRA_ARGS: "--accept-routes"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    networks:
+      - secretario-net
+    profiles:
+      - tailscale  # ativa com: docker compose --profile tailscale up -d
 
   # ── Memória das Conversas ─────────────────────────────────────────────
   redis:
@@ -80,6 +105,7 @@ services:
 
 volumes:
   redis-data:
+  tailscale-state:
 
 networks:
   secretario-net:
