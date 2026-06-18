@@ -32,8 +32,9 @@ Edita o `.env` e preenche:
 
 | Variável | Onde pegar |
 |---|---|
-| `ANTHROPIC_API_KEY` | console.anthropic.com → API Keys |
-| `GROQ_API_KEY` | console.groq.com → API Keys |
+| `OPENROUTER_API_KEY` | openrouter.ai/keys (1 key → vários modelos) |
+| `OPENROUTER_MODEL` | já preenchido com claude-3.5-haiku; troque por `:free` p/ testar grátis |
+| `GROQ_API_KEY` | console.groq.com → API Keys (grátis) |
 | `EVOLUTION_API_KEY` | qualquer string segura (você escolhe) |
 | `N8N_PASSWORD` | você escolhe |
 | `N8N_ENCRYPTION_KEY` | string aleatória ≥32 chars |

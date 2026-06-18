@@ -1,4 +1,4 @@
-# Setup Tailscale + SSH no Windows para o Secretário Pessoal
+﻿# Setup Tailscale + SSH no Windows para o Secretário Pessoal
 # Precisa rodar como Administrador
 # Uso: powershell -ExecutionPolicy Bypass -File .\scripts\setup-tailscale.ps1
 
@@ -87,9 +87,14 @@ if ($TailscaleAuthKey -ne "") {
 Write-Host "`n[4/4] Atualizando .env..." -ForegroundColor Yellow
 $envPath = "C:\Users\$env:USERNAME\Desktop\Projetos\secretario-pessoal\.env"
 if (Test-Path $envPath) {
-    # Pega IP Tailscale da máquina
-    $tsStatus = & "C:\Program Files\Tailscale\tailscale.exe" status --json 2>$null | ConvertFrom-Json
-    $tsIP = $tsStatus?.Self?.TailscaleIPs?[0] ?? "100.x.x.x"
+    # Pega IP Tailscale da maquina (compativel com PowerShell 5.1)
+    $tsIP = "100.x.x.x"
+    try {
+        $tsStatus = & "C:\Program Files\Tailscale\tailscale.exe" status --json 2>$null | ConvertFrom-Json
+        if ($tsStatus -and $tsStatus.Self -and $tsStatus.Self.TailscaleIPs) {
+            $tsIP = $tsStatus.Self.TailscaleIPs[0]
+        }
+    } catch {}
 
     $content = Get-Content $envPath -Raw
     $content = $content -replace 'SSH_HOST=.*', "SSH_HOST=$tsIP"

@@ -26,18 +26,18 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "X-Title", "value": "Secretario Pessoal" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 512, messages: [{ role: 'user', content: 'Classifique estes emails em urgente / importante / pode ignorar / spam. Responda em português, formato WhatsApp curto (máx 15 linhas). Emails: ' + JSON.stringify($json.emails) }] }) }}"
+        "jsonBody": "={{ JSON.stringify({ model: $env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku', max_tokens: 512, messages: [{ role: 'user', content: 'Classifique estes emails em urgente / importante / pode ignorar / spam. Responda em português, formato WhatsApp curto (máx 15 linhas). Emails: ' + JSON.stringify($json.emails) }] }) }}"
       },
       "id": "classificar-claude",
       "name": "Classificar com Claude",
@@ -47,7 +47,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const classificacao = $input.first().json.content?.[0]?.text || '';\nconst total = $('Buscar Emails').first().json.total;\nreturn [{ json: { resumo: `📧 ${total} email(s) não lido(s):\\n\\n${classificacao}` } }];"
+        "jsCode": "const resp = $input.first().json;\nconst classificacao = resp.choices?.[0]?.message?.content || resp.error?.message || '';\nconst total = $('Buscar Emails').first().json.total;\nreturn [{ json: { resumo: `📧 ${total} email(s) não lido(s):\\n\\n${classificacao}` } }];"
       },
       "id": "montar-resumo",
       "name": "Montar Resumo",

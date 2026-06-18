@@ -169,7 +169,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const phone = $('Merge Texto').first().json.phone;\nconst instanceName = $('Merge Texto').first().json.instanceName;\nconst texto = $('Merge Texto').first().json.texto;\n\nlet historico = [];\ntry {\n  const val = $('Ler Histórico Redis').first().json.value;\n  if (val) historico = JSON.parse(val);\n} catch(e) { historico = []; }\n\nconst systemPrompt = `Você é o secretário pessoal do Guilherme Faustino da Silva.\n\nPERFIL:\n- Maringá/PR\n- Frentes ativas: Clube do Gole (validação Sebrae/Impulso Maringá), Secretario (app Node/React/PostgreSQL/Docker), curso ADS no CEEP, trabalho corporativo (gestão financeira/contratos)\n- Dispositivos: iPhone 14, PC desktop (Windows), notebook\n\nCOMPORTAMENTO:\n- Respostas curtas no WhatsApp — máximo 3 linhas salvo pedido explícito\n- Confirme SEMPRE antes de executar ações irreversíveis (delete, envio de email, deploy)\n- Português brasileiro, tom direto\n- Mantenha contexto das últimas 20 mensagens\n\nDocumentos mapeados no Drive:\n{\n  \"tracker\": \"ID_TRACKER\",\n  \"cronograma\": \"ID_CRONOGRAMA\",\n  \"participacao\": \"ID_IMPULSO_MARINGA\"\n}\n\nProjetos SSH:\n{\n  \"secretario\": { \"path\": \"/path/to/secretario\", \"portas\": [3000, 5173, 8080, 5432] },\n  \"clube-do-gole\": { \"path\": \"/path/to/clube-do-gole\" }\n}\n\nResponda SEMPRE em JSON válido:\n{\n  \"intencao\": \"chat|tarefa|agenda|drive|email|codigo|deploy|doc\",\n  \"resposta\": \"texto para o usuário (máx 3 linhas)\",\n  \"acao\": {\n    \"tipo\": \"nenhuma|criar_evento|ler_doc|escrever_doc|ler_email|arquivar_email|enviar_email|executar_ssh|deploy\",\n    \"params\": {}\n  },\n  \"confirmacao_necessaria\": false\n}`;\n\nconst mensagens = [...historico, { role: 'user', content: texto }].slice(-40);\n\nreturn [{\n  json: {\n    phone, instanceName, texto,\n    payload: {\n      model: 'claude-sonnet-4-6',\n      max_tokens: 1024,\n      system: systemPrompt,\n      messages: mensagens\n    },\n    historico: mensagens\n  }\n}];"
+        "jsCode": "const phone = $('Merge Texto').first().json.phone;\nconst instanceName = $('Merge Texto').first().json.instanceName;\nconst texto = $('Merge Texto').first().json.texto;\n\nlet historico = [];\ntry {\n  const val = $('Ler Histórico Redis').first().json.value;\n  if (val) historico = JSON.parse(val);\n} catch(e) { historico = []; }\n\nconst systemPrompt = `Você é o secretário pessoal do Guilherme Faustino da Silva.\n\nPERFIL:\n- Maringá/PR\n- Frentes ativas: Clube do Gole (validação Sebrae/Impulso Maringá), Secretario (app Node/React/PostgreSQL/Docker), curso ADS no CEEP, trabalho corporativo (gestão financeira/contratos)\n- Dispositivos: iPhone 14, PC desktop (Windows), notebook\n\nCOMPORTAMENTO:\n- Respostas curtas no WhatsApp — máximo 3 linhas salvo pedido explícito\n- Confirme SEMPRE antes de executar ações irreversíveis (delete, envio de email, deploy)\n- Português brasileiro, tom direto\n- Mantenha contexto das últimas 20 mensagens\n\nDocumentos mapeados no Drive:\n{\n  \"tracker\": \"ID_TRACKER\",\n  \"cronograma\": \"ID_CRONOGRAMA\",\n  \"participacao\": \"ID_IMPULSO_MARINGA\"\n}\n\nProjetos SSH:\n{\n  \"secretario\": { \"path\": \"/path/to/secretario\", \"portas\": [3000, 5173, 8080, 5432] },\n  \"clube-do-gole\": { \"path\": \"/path/to/clube-do-gole\" }\n}\n\nResponda SEMPRE em JSON válido:\n{\n  \"intencao\": \"chat|tarefa|agenda|drive|email|codigo|deploy|doc\",\n  \"resposta\": \"texto para o usuário (máx 3 linhas)\",\n  \"acao\": {\n    \"tipo\": \"nenhuma|criar_evento|ler_doc|escrever_doc|ler_email|arquivar_email|enviar_email|executar_ssh|deploy\",\n    \"params\": {}\n  },\n  \"confirmacao_necessaria\": false\n}`;\n\nconst mensagens = [...historico, { role: 'user', content: texto }].slice(-40);\n\n// OpenRouter usa formato OpenAI: system entra como primeira mensagem\nconst messagesComSystem = [{ role: 'system', content: systemPrompt }, ...mensagens];\n\nreturn [{\n  json: {\n    phone, instanceName, texto,\n    payload: {\n      model: $env.OPENROUTER_MODEL || 'anthropic/claude-3.5-haiku',\n      max_tokens: 1024,\n      messages: messagesComSystem\n    },\n    historico: mensagens\n  }\n}];"
       },
       "id": "build-payload",
       "name": "Montar Payload Claude",
@@ -180,12 +180,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://api.anthropic.com/v1/messages",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
-            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY }}" },
-            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "HTTP-Referer", "value": "https://github.com/secretario-pessoal" },
+            { "name": "X-Title", "value": "Secretario Pessoal" },
             { "name": "Content-Type", "value": "application/json" }
           ]
         },
@@ -194,14 +195,14 @@
         "jsonBody": "={{ JSON.stringify($json.payload) }}"
       },
       "id": "claude-api",
-      "name": "Claude API",
+      "name": "OpenRouter API",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4,
       "position": [2400, 300]
     },
     {
       "parameters": {
-        "jsCode": "const phone = $('Montar Payload Claude').first().json.phone;\nconst instanceName = $('Montar Payload Claude').first().json.instanceName;\nconst historico = $('Montar Payload Claude').first().json.historico;\n\nconst content = $input.first().json.content?.[0]?.text || '';\n\nlet parsed;\ntry {\n  // Remove possível markdown em volta do JSON\n  const clean = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(clean);\n} catch(e) {\n  parsed = { intencao: 'chat', resposta: content, acao: { tipo: 'nenhuma', params: {} }, confirmacao_necessaria: false };\n}\n\nconst historicoAtualizado = [...historico, { role: 'assistant', content }].slice(-40);\n\nreturn [{\n  json: {\n    phone, instanceName,\n    intencao: parsed.intencao || 'chat',\n    resposta: parsed.resposta || content,\n    acao: parsed.acao || { tipo: 'nenhuma', params: {} },\n    confirmacao_necessaria: parsed.confirmacao_necessaria || false,\n    historicoAtualizado: JSON.stringify(historicoAtualizado)\n  }\n}];"
+        "jsCode": "const phone = $('Montar Payload Claude').first().json.phone;\nconst instanceName = $('Montar Payload Claude').first().json.instanceName;\nconst historico = $('Montar Payload Claude').first().json.historico;\n\nconst resp = $input.first().json;\nconst content = resp.choices?.[0]?.message?.content || resp.error?.message || '';\n\nlet parsed;\ntry {\n  // Remove possível markdown em volta do JSON\n  const clean = content.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  parsed = JSON.parse(clean);\n} catch(e) {\n  parsed = { intencao: 'chat', resposta: content, acao: { tipo: 'nenhuma', params: {} }, confirmacao_necessaria: false };\n}\n\nconst historicoAtualizado = [...historico, { role: 'assistant', content }].slice(-40);\n\nreturn [{\n  json: {\n    phone, instanceName,\n    intencao: parsed.intencao || 'chat',\n    resposta: parsed.resposta || content,\n    acao: parsed.acao || { tipo: 'nenhuma', params: {} },\n    confirmacao_necessaria: parsed.confirmacao_necessaria || false,\n    historicoAtualizado: JSON.stringify(historicoAtualizado)\n  }\n}];"
       },
       "id": "parse-response",
       "name": "Parsear Resposta",
@@ -425,9 +426,9 @@
       "main": [[{ "node": "Montar Payload Claude", "type": "main", "index": 0 }]]
     },
     "Montar Payload Claude": {
-      "main": [[{ "node": "Claude API", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "OpenRouter API", "type": "main", "index": 0 }]]
     },
-    "Claude API": {
+    "OpenRouter API": {
       "main": [[{ "node": "Parsear Resposta", "type": "main", "index": 0 }]]
     },
     "Parsear Resposta": {

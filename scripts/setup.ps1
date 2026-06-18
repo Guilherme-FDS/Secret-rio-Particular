@@ -1,4 +1,4 @@
-# Setup do Secretário Pessoal
+﻿# Setup do Secretário Pessoal
 # Executa após: docker compose up -d
 # Uso: .\scripts\setup.ps1
 
